@@ -1,0 +1,45 @@
+# DropZone "server": turns this computer into the deployment target of the repository.
+#   cp deploy/server/.env.example deploy/server/.env   # then fill in REPO_URL and RUNNER_TOKEN
+#   docker compose -f deploy/server/compose.yml --env-file deploy/server/.env up -d
+#
+# - runner: a self-hosted GitHub Actions runner. It connects to GitHub (outgoing
+#   connection only) and runs the jobs that target the "dropzone-server" label.
+#   It drives the Docker of this computer through its socket: the stack it deploys
+#   runs next to this one, not inside it.
+# - tunnel: a Cloudflare quick tunnel (no account). It gives the application,
+#   published on port 8080 of this computer, a public HTTPS address:
+#     docker logs dropzone-tunnel 2>&1 | grep trycloudflare.com
+#   The address changes each time the tunnel restarts.
+
+name: dropzone-server
+
+services:
+  runner:
+    image: myoung34/github-runner:latest
+    container_name: dropzone-runner
+    environment:
+      REPO_URL: ${REPO_URL:?set REPO_URL in deploy/server/.env}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?set RUNNER_TOKEN in deploy/server/.env}
+      RUNNER_NAME: ${RUNNER_NAME:-dropzone-server}
+      RUNNER_SCOPE: repo
+      LABELS: dropzone-server
+      # Keep the registration across restarts (the registration token expires after 1 hour).
+      CONFIGURED_ACTIONS_RUNNER_FILES_DIR: /runner/data
+      DISABLE_AUTOMATIC_DEREGISTRATION: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-data:/runner/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: dropzone-tunnel
+    command: tunnel --no-autoupdate --url http://host.docker.internal:${APP_PORT:-8080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  runner-data:
